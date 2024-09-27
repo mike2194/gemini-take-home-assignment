@@ -2,10 +2,20 @@
 # Gemini Take Home Assignment
 
 ## Objective
-The purpose of this script is to collect historical price data from Gemini's REST API for a given trading symbol (specified by "--chain") and trigger an alert event if the calculated standard deviation is greater than a given threshold (specified by "--threshold").
+The purpose of this script is to collect historical price data from Gemini's REST API for a given trading symbol (specified by "--chain") and write event data to stdout, to be handled by an alert system.  Output will only be generated if the calculated standard deviation is greater than a given threshold (specified by "--threshold").  Absence of output to stdout implies threshold was not crossed and therefore no alert event should be handled.
+
+## Install
+* Use pip to install requirements
+	```sh
+	python3 -m pip install -r requirements.txt
+	```
+* Or, build Docker container
+	```sh
+	docker build -t gemini-api-alert:0.1.0 .
+	```
 
 ## Usage
-```man
+```
 Usage: main.py [OPTIONS]
 
 	Gemini REST API alert script for calculated standard deviation from hourly
@@ -33,34 +43,62 @@ Options:
 	--help                          Show this message and exit.
 ```
 
-## Example Usage
+## Example
 * Python script "apiAlerts.py" can be executed as follows:
 	```sh
-	python3 ./apiAlerts.py --chain=BTCUSD
-
-* Script may also be run as a container container:
-	```sh
-	# build container
-	docker build -t gemini-price-alert:latest .
-	# run container
-  docker run -it --rm --name "gemini-price-alerts" localhost/gemini-price-alert:latest --chain=BTCUSD
+	python3 ./apiAlerts.py --chain=BTCUSD --threshold=1
 	```
+* Script may also be executed within a container:
+	```sh
+	docker run -it --rm --name "gemini-price-alerts" localhost/gemini-price-alert:latest --chain=BTCUSD
+	```
+* Example output:
+	```json
+	{
+	    "timestamp": "2024-09-27T13:28:31+00:00",
+	    "log_level": "ERROR",
+	    "trading_pair": "BTCUSD",
+	    "deviation": true,
+	    "data": {
+	        "last_price": 57235.5,
+	        "average_price": 56672.66,
+	        "stddev": 57.8934046455133,
+	        "change": -57.25
+	    }
+	}
+	```
+ 
+## Assignment Submission Notes
 
-## Notes and Future Changes
-* Completed in about 10hours, including 2 re-writes because I don't know Gemini's API very well.
+### Completion
+* Completed in about 10hours, including 2 re-writes because I don't know Gemini's API very well. I initially made use of the "v1/pricefeed" endpoint which would have collected price data over time to calculate standard deviation, but soon realized this was not necessary nor fit the instructions. 
 * I chose to output to stdout a JSON object containing the results.  Logging (sent to stderr) is separate and intended for analyzing the script's status.  The output data could be piped to another, more generic, script which performs the intended routing and delivery of the alert event (such as triggering pagerduty incident, etc).
-* There is a somewhat significant question of whether to use "candles" or "ticker" for the price data to be calculated. Implementing one or the other is somewhat trivial, thus I've included both "apiAlerts-ticker.py" for "ticker" and "apiAlerts.py" for "candles".  The "candles" endpoint does denote the timestamp for each price explicitly, while the timestamp must be inferred from "ticker" data).  However, "open" and "close" values from "ticker" seem to be reversed -- I'd like to discuss this in the followup as they do not correlate with the "changes" list of prices.
-	For example, "ticker" returned `{"open": "57292.74", "close": "57178.25"}`
-	whereas "candles" returned `{'timestamp': '2024-09-26T19:00:00+00:00', 'price': 57292.74}` (most recent) and `{'timestamp': '2024-09-25T21:00:00+00:00', 'price': 57178.25}` oldest.
-	Therefore, response data from "candles" is more intuitive to work with while "ticker" data is more ambiguous.  In a real scenario, I would want to discuss this issue with the trading team to better understand which is more meaningful for this alert rule.
+
+### Requirements
+* Requirements are defined by [requirements.txt](./requirements.txt).
+* Installation and execution instructions are described above in [Install](#install) and [Usage](#usage) sections.
+* Example methods for executing the script are provided in [Example](#example) section.
+
+### Implementation Notes
 * I would also like to refactor the main() function to include only the essential controls, moving the math calculations and item factories into separate functions and thus making main() more readable.
-* This micro-app/script needs some unit tests.  However...
-* (Hypothetically) I don't like the overall implementation design and would question why the project requirements defined implementation details at all.  I could agree that generating alert events based on some calculation of historical price data.  Although, I would prefer to maintain a more generic "price-exporter" application who's data is scraped and recorded into TSDB, then simply write alert rules that calculate [in this example] standard deviation of historical prices and then define the alert rules as "PrometheusRule" objects or similar.  This way, the price data is queryable and can be visualized in dashboards, etc., instead of an eventual accumulation of one-off scripts that are very not DRY.
-  Something like this would be the alert query:
-  ```yaml
-  alert: PriceDeviation_Stddev
+* There is a somewhat significant question of whether to use "candles" or "ticker" api endpoint to collect price data for calculation. Implementing one or the other is somewhat trivial, thus I've included both "apiAlerts-ticker.py" for "ticker" endpoint and "apiAlerts.py" for "candles" endpoint.
+  * The "candles" endpoint does provide a timestamp for each price explicitly, while the timestamp must be inferred from "ticker" data.
+  * However, "open" and "close" values from "ticker" seem to be reversed -- I'd want to specifically discuss this point in the followup.
+  * For example:
+    * "ticker" returned `{"open": "57292.74", "close": "57178.25"}`
+    * whereas "candles" returned the latest price: `{'timestamp': '2024-09-26T19:00:00+00:00', 'price': 57292.74}` and the oldest: `{'timestamp': '2024-09-25T21:00:00+00:00', 'price': 57178.25}`.
+    * Therefore, response data from "candles" is more intuitive to work with, while "ticker" data is more ambiguous (ordered in timestamp descending, per API docs).
+    * In a real scenario, I would want to discuss this issue with the trading team to better understand which is (if one is not) more meaningful to calculate standard deviation for the purpose of alerting and notification.  The importance of this point is based on preventing alert fatigue.
+* This alert script / micro-app needs some unit tests, too.  However,
+
+### Hypothetically
+I don't like the overall implementation design and would question why project requirements defined implementation details at all. I agree with the overall objective, to generating alert events based on some calculation of historical price data. However, as an SRE, I would prefer to maintain a more generic "price-exporter" application whose data is scraped and recorded into TSDB (Time Series Database), then simply write alert rules that calculate [in this example] standard deviation of historical prices by defining the PrometheusRule alerts (or make use of a recording rule to track standard deviation over time). This way, the price data could be visualized in dashboards, additional alert rules could be more easily implemented by application engineers (self-service), etc., instead of what could turn into an accumulation of one-off scripts that are more difficult to manage, quickly become _stale_, and not DRY (Don't Repeat Yourself).
+
+Something like the following would be the resulting Prometheus alert rule:
+```yaml
+- alert: PriceDeviation_Stddev
   expr: |
-    stddev_over_time(price{trading_pair="BTCUSD"}[24h:1h]) > 1
+    stddev_over_time(chain_historical_price{trading_pair="BTCUSD"}[24h:1h]) > 1
   for: 15m
   labels:
     severity: warning
@@ -73,5 +111,4 @@ Options:
       Transaction volume may be higher than normal, 
     action: |
       Confirm status of beverage refridgerator.
-  ```
-
+```
