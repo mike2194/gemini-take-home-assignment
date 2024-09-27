@@ -145,8 +145,8 @@ def main(chain, dry_run, threshold, output_format, timezone, log_level):
         output_data = {
             "last_price": float(last_price),
             "average_price": float(average_price),
-            "deviation": float(std_dev),
-            "price_change_value": float(price_change),
+            "stddev": float(std_dev),
+            "change": float(price_change),
         }
 
     try:
@@ -235,11 +235,13 @@ def write_output(timestamp_now, chain, output_data, log_level, format):
         "timestamp": timestamp_now,
         "log_level": log_level.upper(),
         "trading_pair": chain.upper(),
-        "deviation": "",
+        "deviation": False,
         "data": output_data,
         # { "error": None }
-        # { "last_price": float(), "average_price": string(), "deviation": float(), "price_change_value": float() }
+        # { "last_price": float(), "average_price": string(), "stddev": float(), "change": float() }
     }
+    if output_data["stddev"] > 0:
+        output["deviation"] = True
 
     if format == "yaml":
         # TODO: output-format="yaml"
